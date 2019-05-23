@@ -12,21 +12,6 @@
 #include <tclap/CmdLine.h>
 
 
-
-// Just for convenience
-using Seconds = std::chrono::duration<double>;
-
-// Measure how much time the given function takes to execute using chrono
-// Pass the function name, then all relevant arguments, including the object as the first if it's a member function
-template<typename Function, typename... Args>
-Seconds measure(Function&& toTime, Args&&... a)
-{
-    auto start{std::chrono::steady_clock::now()};                                                   // Start timer
-    std::invoke(std::forward<Function>(toTime), std::forward<Args>(a)...);  // Forward and call
-    auto stop{std::chrono::steady_clock::now()};                                                   // Stop timer
-    return (stop - start);
-}
-
 using namespace nvinfer1;
 
 static Logger mLogger;
@@ -34,12 +19,13 @@ Logger gLoggerSample{Logger::Severity::kINFO};
 LogStreamConsumer gLogError{LOG_ERROR(gLoggerSample)};
 
 int maxBatchSize;
+size_t n_iterations;
 bool int8mode;
 bool fp16mode;
 std::string modelFile;
 std::string enginePath;
 void* buffers[2];
-
+float inferenceTime;
 IHostMemory* trtModelStream{nullptr};
 
 void doInference(IExecutionContext& context, const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex, int batchSize);
@@ -57,10 +43,13 @@ int main(int argc, char** argv){
 
         TCLAP::ValueArg<std::string> onnxPathAg("o", "onnx-path", "Path to *.onnx model", false, "/home/smocilac/dipl_seminar/swiftnet/swiftnet.onnx", "path");
         TCLAP::ValueArg<std::string> enginePathAg("e", "engine-path", "Path where *.trt model should be/is stored", false, "/home/smocilac/dipl_seminar/dipl_seminar/swiftnet.trt", "path");
-        TCLAP::ValueArg<int> batchSizeAg("b", "batch", "Batch size.", false, 1, "size_t");
+        TCLAP::ValueArg<size_t> batchSizeAg("b", "batch", "Batch size.", false, 1, "size_t");
+        TCLAP::ValueArg<size_t> nItersAg("n", "n-iters", "Number of iterations used in report generation.", false, 30, "size_t");
+        
         cmd.add(onnxPathAg);
         cmd.add(enginePathAg);
         cmd.add(batchSizeAg);
+        cmd.add(nItersAg);
         TCLAP::SwitchArg fp16modeAg("f","fp16","FP16 mode.", cmd, false);
         TCLAP::SwitchArg int8modeAg("i","int8","INT8 mode.", cmd, false);
         TCLAP::SwitchArg createNewEngineAg("c","create-engine","Creates new engine (either creates the engine file or overrides the old one).", cmd, false);
@@ -69,6 +58,7 @@ int main(int argc, char** argv){
         modelFile = onnxPathAg.getValue();
         enginePath = enginePathAg.getValue();
         maxBatchSize = batchSizeAg.getValue();
+        n_iterations = nItersAg.getValue();
 
 	    fp16mode = fp16modeAg.getValue();
         int8mode = int8modeAg.getValue();
@@ -91,8 +81,6 @@ int main(int argc, char** argv){
     std::unique_ptr<char[]> data;
     size_t data_len;
     readEngine(data, data_len);
-    //std::cout << data_len << std::endl;
-    //exit(-1);
 
     // deserialize the engine
     IRuntime* runtime = createInferRuntime(mLogger.getTRTLogger());
@@ -111,17 +99,23 @@ int main(int argc, char** argv){
     const ICudaEngine& ctxEngine = context->getEngine();
     
     createRandomBuffers(ctxEngine, buffers, size_in, size_out, inputIndex);
-    doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex, maxBatchSize);
-    
-    //auto t1 = std::chrono::high_resolution_clock::now();
-    //for (int i = 0; i < 1000; i++)
+
+    //doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex, maxBatchSize); // just warming up
+    inferenceTime = 0.0f;
+    auto t1 = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < n_iterations; i++)
         doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex, maxBatchSize);
-    //auto t2 = std::chrono::high_resolution_clock::now();
+    auto t2 = std::chrono::high_resolution_clock::now();
 
-    //int timeAvg = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() / 1000;
+    float timeAvg = ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+    std::cout << "Average inference with GPU-CPU and CPU-GPU transfer: " <<  timeAvg / n_iterations  << " ms. " << std::endl;
 
-    //std::cout << "inference timing: " << timeAvg << " ms. " << std::endl;
-
+    // std::cout << "inference time final: " << inferenceTime << std::endl;
+    // std::cout << "full time: " << timeAvg << std::endl;
+    //float timeAvgInf = inferenceTime / (n_iterations * n_iterations);
+    //std::cout << "Average inference with GPU-CPU and CPU-GPU transfer: " <<  ((timeAvg - inferenceTime) / n_iterations) + timeAvgInf  << " ms. " << std::endl;
+    //std::cout << "Average inference only: " << timeAvgInf << " ms. " << std::endl;
+    
     // for (int b = 0; b < 2; ++b) 
     // {
     //     CHECK(cudaFree(buffers[b]));
@@ -140,7 +134,6 @@ void doInference(IExecutionContext& context, const ICudaEngine& engine, float**&
 {
     assert(engine.getNbBindings() == 2);
     
-    // create GPU buffers and a stream
     int outputIndex = (inputIndex + 1) % 2;
     
     cudaStream_t stream;
@@ -149,19 +142,18 @@ void doInference(IExecutionContext& context, const ICudaEngine& engine, float**&
     // DMA the input to the GPU,  execute the batch asynchronously, and DMA it back:
     CHECK(cudaMemcpyAsync(buffers[inputIndex], io_buffers[inputIndex], size_in * sizeof(float), cudaMemcpyHostToDevice, stream));
     
-    auto t1 = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < 1000; i++)
+    // auto t1 = std::chrono::high_resolution_clock::now();
+    // for (int i = 0; i < n_iterations; i++)
         context.enqueue(batchSize, buffers, stream, nullptr);    
-    auto t2 = std::chrono::high_resolution_clock::now();
+    // auto t2 = std::chrono::high_resolution_clock::now();
     
-    int timeAvg = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() / 1000;
-    std::cout << "inference timing: " << timeAvg << " ms. " << std::endl;
-
+    // inferenceTime += ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+    //std::cout << "inference time: " << inferenceTime << std::endl;
     
     CHECK(cudaMemcpyAsync(io_buffers[outputIndex], buffers[outputIndex], size_out * sizeof(float), cudaMemcpyDeviceToHost, stream));
     cudaStreamSynchronize(stream);
     
-    // release the stream and the buffers
+    // release the stream
     cudaStreamDestroy(stream);
 }
 
@@ -253,7 +245,7 @@ void readEngine(std::unique_ptr<char[]> &data, size_t &data_len)
     file.close();
 };
 
-void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex){
+void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex) {
     const int const_nbBindings = engine.getNbBindings();
     
     assert(const_nbBindings == 2);
@@ -287,6 +279,4 @@ void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t 
     }
     CHECK(cudaMalloc(&buffers[inputIndex], size_in * sizeof(float)));
     CHECK(cudaMalloc(&buffers[(inputIndex + 1) % 2], size_out * sizeof(float)));
-
-
 }
