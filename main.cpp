@@ -9,6 +9,9 @@
 #include "logging.h"
 #include <chrono>
 #include <functional>
+#include <tclap/CmdLine.h>
+
+
 
 // Just for convenience
 using Seconds = std::chrono::duration<double>;
@@ -31,10 +34,8 @@ Logger gLoggerSample{Logger::Severity::kINFO};
 LogStreamConsumer gLogError{LOG_ERROR(gLoggerSample)};
 
 int maxBatchSize;
-int OUTPUT_C;
-int INPUT_H;
-int INPUT_W;
-int INPUT_C;
+bool int8mode;
+bool fp16mode;
 std::string modelFile;
 std::string enginePath;
 void* buffers[2];
@@ -48,17 +49,42 @@ void buildEngine();
 void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
 
 
-int main(){
-    modelFile = "/home/smocilac/dipl_seminar/swiftnet/swiftnet.onnx";
-    enginePath = "/home/smocilac/dipl_seminar/dipl_seminar/swiftnet.trt";
-    maxBatchSize = 1;
-    OUTPUT_C = 19;
-    INPUT_H = 1024;
-    INPUT_W = 2048;
-    INPUT_C = 3;
-    
+int main(int argc, char** argv){
     bool createNewEngine = true;
 
+    try {
+        TCLAP::CmdLine cmd("Command description message", ' ', "0.9");
+
+        TCLAP::ValueArg<std::string> onnxPathAg("o", "onnx-path", "Path to *.onnx model", false, "/home/smocilac/dipl_seminar/swiftnet/swiftnet.onnx", "path");
+        TCLAP::ValueArg<std::string> enginePathAg("e", "engine-path", "Path where *.trt model should be/is stored", false, "/home/smocilac/dipl_seminar/dipl_seminar/swiftnet.trt", "path");
+        TCLAP::ValueArg<int> batchSizeAg("b", "batch", "Batch size.", false, 1, "size_t");
+        cmd.add(onnxPathAg);
+        cmd.add(enginePathAg);
+        cmd.add(batchSizeAg);
+        TCLAP::SwitchArg fp16modeAg("f","fp16","FP16 mode.", cmd, false);
+        TCLAP::SwitchArg int8modeAg("i","int8","INT8 mode.", cmd, false);
+        TCLAP::SwitchArg createNewEngineAg("c","create-engine","Creates new engine (either creates the engine file or overrides the old one).", cmd, false);
+        cmd.parse( argc, argv );
+
+        modelFile = onnxPathAg.getValue();
+        enginePath = enginePathAg.getValue();
+        maxBatchSize = batchSizeAg.getValue();
+
+	    fp16mode = fp16modeAg.getValue();
+        int8mode = int8modeAg.getValue();
+        createNewEngine = createNewEngineAg.getValue();
+
+    } catch (TCLAP::ArgException &e) { 
+        std::cerr << "error: " << e.error() << " for arg " << e.argId() << std::endl; 
+    }
+
+    std::cout << "ONNX path:\t" << modelFile << std::endl;
+    std::cout << "Enginge path:\t" << enginePath << std::endl;
+    std::cout << "Batch Size:\t " << maxBatchSize << std::endl;
+    std::cout << "FP16 mode:\t" << fp16mode << std::endl;
+    std::cout << "INT8 mode:\t" << int8mode << std::endl;
+    std::cout << "Create engine:\t" << createNewEngine << std::endl;
+    
     if (createNewEngine)
         buildEngine();
     
@@ -163,8 +189,8 @@ void buildEngine(){
     // Build the engine
     builder->setMaxBatchSize(maxBatchSize);
     builder->setMaxWorkspaceSize(1 << 20);
-    builder->setFp16Mode(false);
-    builder->setInt8Mode(false);
+    builder->setFp16Mode(fp16mode);
+    builder->setInt8Mode(int8mode);
     
     int nbOuts = network->getNbOutputs();
     std::cout << "Found " << nbOuts << " output tensors.\n";
