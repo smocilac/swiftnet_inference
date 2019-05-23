@@ -10,6 +10,7 @@ set (tensorrt_test_VERSION_MAJOR 1)
 set (tensorrt_test_VERSION_MINOR 0)
 
 # include common headers
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/common)
 
 # tensorrt wrapper project

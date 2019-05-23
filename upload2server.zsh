@@ -2,11 +2,13 @@
 
 SCP_IP=
 SCP_USER=
-SCP_PATH=/home/
+SCP_PATH=
 
-scp -r /home/stjepan/Faks/dipl_seminar/common ${SCP_USER}@${SCP_IP}:${SCP_PATH}/dipl_seminar
-scp -r /home/stjepan/Faks/dipl_seminar/CMakeLists.txt ${SCP_USER}@${SCP_IP}:${SCP_PATH}/dipl_seminar
-scp -r /home/stjepan/Faks/dipl_seminar/main.cpp ${SCP_USER}@${SCP_IP}:${SCP_PATH}/dipl_seminar
+scp -r $(pwd)/common         ${SCP_USER}@${SCP_IP}:${SCP_PATH}/dipl_seminar
+scp -r $(pwd)/tclap          ${SCP_USER}@${SCP_IP}:${SCP_PATH}/dipl_seminar
+scp    $(pwd)/CMakeLists.txt ${SCP_USER}@${SCP_IP}:${SCP_PATH}/dipl_seminar
+scp    $(pwd)/main.cpp       ${SCP_USER}@${SCP_IP}:${SCP_PATH}/dipl_seminar
+
 
 
 
