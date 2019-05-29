@@ -376,7 +376,7 @@ inline void setAllTensorScales(INetworkDefinition* network, float inScales = 2.0
         {
             ITensor* input{layer->getInput(j)};
             // Optional inputs are nullptr here and are from RNN layers.
-            if (input != nullptr && !input->dynamicRangeIsSet())
+            if (input != nullptr /*&& !input->dynamicRangeIsSet()*/)
             {
                 input->setDynamicRange(-inScales, inScales);
             }
@@ -393,7 +393,7 @@ inline void setAllTensorScales(INetworkDefinition* network, float inScales = 2.0
         {
             ITensor* output{layer->getOutput(j)};
             // Optional outputs are nullptr here and are from RNN layers.
-            if (output != nullptr && !output->dynamicRangeIsSet())
+            if (output != nullptr/* && !output->dynamicRangeIsSet()*/)
             {
                 // Pooling must have the same input and output scales.
                 if (layer->getType() == LayerType::kPOOLING)

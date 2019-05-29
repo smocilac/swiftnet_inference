@@ -11,6 +11,15 @@
 #include <functional>
 #include <tclap/CmdLine.h>
 
+#include "cudaMappedMemory.h"
+
+/*
+TODO
+torch onnx caffe2 onnx
+remove memcpy tx2
+graf (x - resolution, y = fps)
+*/
+
 
 using namespace nvinfer1;
 
@@ -28,11 +37,14 @@ void* buffers[2];
 float inferenceTime;
 IHostMemory* trtModelStream{nullptr};
 
-void doInference(IExecutionContext& context, const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex, int batchSize);
+void doInference(IExecutionContext& context, const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
 void saveEngine();
 void readEngine(std::unique_ptr<char[]> &data, size_t &data_len);
 void buildEngine();
 void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
+void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
+size_t getBufferSize(nvinfer1::Dims dims, int isInput);
+
 
 
 int main(int argc, char** argv){
@@ -99,22 +111,22 @@ int main(int argc, char** argv){
     const ICudaEngine& ctxEngine = context->getEngine();
     
     createRandomBuffers(ctxEngine, buffers, size_in, size_out, inputIndex);
+    //createRandomBuffersUnifiedMemory(ctxEngine, buffers, size_in, size_out, inputIndex);
 
     //doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex, maxBatchSize); // just warming up
     inferenceTime = 0.0f;
     auto t1 = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < n_iterations; i++)
-        doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex, maxBatchSize);
+        doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex);
     auto t2 = std::chrono::high_resolution_clock::now();
 
     float timeAvg = ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
     std::cout << "Average inference with GPU-CPU and CPU-GPU transfer: " <<  timeAvg / n_iterations  << " ms. " << std::endl;
-
-    // std::cout << "inference time final: " << inferenceTime << std::endl;
-    // std::cout << "full time: " << timeAvg << std::endl;
-    //float timeAvgInf = inferenceTime / (n_iterations * n_iterations);
-    //std::cout << "Average inference with GPU-CPU and CPU-GPU transfer: " <<  ((timeAvg - inferenceTime) / n_iterations) + timeAvgInf  << " ms. " << std::endl;
-    //std::cout << "Average inference only: " << timeAvgInf << " ms. " << std::endl;
+    std::cout << "inference time final: " << inferenceTime << std::endl;
+    std::cout << "full time: " << timeAvg << std::endl;
+    float timeAvgInf = inferenceTime / (n_iterations * n_iterations);
+    std::cout << "Average inference with GPU-CPU and CPU-GPU transfer: " <<  ((timeAvg - inferenceTime) / n_iterations) + timeAvgInf  << " ms. " << std::endl;
+    std::cout << "Average inference only: " << timeAvgInf << " ms. " << std::endl;
     
     // for (int b = 0; b < 2; ++b) 
     // {
@@ -130,7 +142,7 @@ int main(int argc, char** argv){
 }
 
 
-void doInference(IExecutionContext& context, const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex, int batchSize)
+void doInference(IExecutionContext& context, const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex)
 {
     assert(engine.getNbBindings() == 2);
     
@@ -142,16 +154,16 @@ void doInference(IExecutionContext& context, const ICudaEngine& engine, float**&
     // DMA the input to the GPU,  execute the batch asynchronously, and DMA it back:
     CHECK(cudaMemcpyAsync(buffers[inputIndex], io_buffers[inputIndex], size_in * sizeof(float), cudaMemcpyHostToDevice, stream));
     
-    // auto t1 = std::chrono::high_resolution_clock::now();
-    // for (int i = 0; i < n_iterations; i++)
-        context.enqueue(batchSize, buffers, stream, nullptr);    
-    // auto t2 = std::chrono::high_resolution_clock::now();
-    
-    // inferenceTime += ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
-    //std::cout << "inference time: " << inferenceTime << std::endl;
+    auto t1 = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < n_iterations; i++)
+        context.enqueue(maxBatchSize, buffers, stream, nullptr);    
+    //std::cout << "inference time: " << inferenceTime / n_iterations << std::endl;
     
     CHECK(cudaMemcpyAsync(io_buffers[outputIndex], buffers[outputIndex], size_out * sizeof(float), cudaMemcpyDeviceToHost, stream));
     cudaStreamSynchronize(stream);
+    
+    auto t2 = std::chrono::high_resolution_clock::now();
+    inferenceTime += ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
     
     // release the stream
     cudaStreamDestroy(stream);
@@ -245,7 +257,7 @@ void readEngine(std::unique_ptr<char[]> &data, size_t &data_len)
     file.close();
 };
 
-void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex) {
+void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex){
     const int const_nbBindings = engine.getNbBindings();
     
     assert(const_nbBindings == 2);
@@ -279,4 +291,43 @@ void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t 
     }
     CHECK(cudaMalloc(&buffers[inputIndex], size_in * sizeof(float)));
     CHECK(cudaMalloc(&buffers[(inputIndex + 1) % 2], size_out * sizeof(float)));
+}
+
+void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex){
+    const int const_nbBindings = engine.getNbBindings();
+    assert(const_nbBindings == 2); // only one input and one output is allowed
+    assert(engine.bindingIsInput(0) == 1); // on index 0 must be input for now
+    
+    io_buffers =  (float **) malloc (const_nbBindings * sizeof(float*));
+
+    inputIndex = 0;
+    size_in = getBufferSize(engine.getBindingDimensions(inputIndex), 1);
+    size_out = getBufferSize(engine.getBindingDimensions((inputIndex + 1) % 2), 0);
+    
+    if( !cudaAllocMapped((void**)&io_buffers[inputIndex], (void**)&buffers[inputIndex], size_in * sizeof(float) ) ){
+        printf("TensorRT performance test: ERROR: Could not allocate unified memory for input buffers!\n");
+        exit(-1);
+    }
+
+    if( !cudaAllocMapped((void**)&io_buffers[(inputIndex + 1) % 2], (void**)&buffers[(inputIndex + 1) % 2], size_out * sizeof(float)) ){
+        printf("TensorRT performance test: ERROR: Could not allocate unified memory for input buffers!\n");
+        exit(-1);
+    }
+
+    std::cout << "Succesfully created unified memory!\n";
+}
+
+
+size_t getBufferSize(nvinfer1::Dims dims, int isInput){
+    int totalSize = 1;
+    if (isInput) std::cout << "INPUT:\t";
+    else std::cout << "OUTPUT:\t";
+
+    for (int j = 0; j < dims.nbDims; j++){
+        totalSize *= dims.d[j];
+        std::cout << dims.d[j] << " ";
+    }
+
+    std::cout << " ;\ttotal size = " << totalSize << " floats." << std::endl;
+    return totalSize ;
 }

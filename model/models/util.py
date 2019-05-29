@@ -7,6 +7,9 @@ import pdb
 upsample = lambda x, size: F.interpolate(x, size, mode='nearest')
 batchnorm_momentum = 0.01 / 2
 
+util_target_size=(256, 512)
+util_image_size=(1024, 2048)
+
 
 def get_n_params(parameters):
     pp = 0
@@ -38,7 +41,8 @@ class _Upsample(nn.Module):
         self.num_maps_in = num_maps_in
         self.num_maps_out = num_maps_out
         self.skip_maps_in = skip_maps_in
-        self.x = 64 * (256 // skip_maps_in)
+        #self.x = 64 * (256 // skip_maps_in)
+        self.x = 64 * (util_target_size[0] // skip_maps_in)
         self.y = self.x * 2
 
     def forward(self, x, skip):
@@ -72,22 +76,23 @@ class SpatialPyramidPooling(nn.Module):
 
     def forward(self, x):
         levels = []
-        #target_size = x.size()[2:4]
-        target_size = (32,64)
+        # target_size = x.size()[2:4]
+        # target_size = (32,64)
+        target_size=(util_target_size[0] // 8, util_target_size[1] // 8)
         ar = target_size[1] / target_size[0]
 
         x = self.spp[0].forward(x)
         levels.append(x)
         num = len(self.spp) - 1
         print(num," ", target_size)
-        grid_sizes = [(8,16), (4,8), (2,4)]
+        # grid_sizes = [(8,16), (4,8), (2,4)]
 
         for i in range(1, num):
             if not self.square_grid:
                 #pdb.set_trace()
-                #grid_size = (self.grids[i - 1], max(1, round(float(ar * self.grids[i - 1]))))
-                print("grid size = ", grid_sizes[i-1])
-                x_pooled = F.adaptive_avg_pool2d(x, grid_sizes[i-1])
+                grid_size = (self.grids[i - 1], max(1, round(float(ar * self.grids[i - 1]))))
+                # print("grid size = ", grid_sizes[i-1])
+                x_pooled = F.adaptive_avg_pool2d(x, grid_size)# grid_sizes[i-1])
             else:
                 x_pooled = F.adaptive_avg_pool2d(x, self.grids[i - 1])
             level = self.spp[i].forward(x_pooled)

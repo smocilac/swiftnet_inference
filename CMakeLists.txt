@@ -23,11 +23,11 @@ find_package(CUDA)
 set(CUDA_VERBOSE_BUILD ON)
 message("-- CUDA version: ${CUDA_VERSION}")
 if(CUDA_VERSION_MAJOR GREATER 9)
-	message("-- CUDA ${CUDA_VERSION_MAJOR} detected, enabling SM_61")
+	message("-- CUDA ${CUDA_VERSION_MAJOR} detected, enabling SM_72")
 	set(
 		CUDA_NVCC_FLAGS
 		${CUDA_NVCC_FLAGS}; 
-		-gencode arch=compute_61,code=sm_61
+		-gencode arch=compute_72,code=sm_72
 	)
 endif()
 
@@ -59,9 +59,15 @@ if(NOT TENSORRT_FOUND)
     "Cannot find TensorRT library.")
 endif()
 
+# from tx2-camera project, needed for unified memory 
+set(UTILS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tx2-camera/utils)
+#set(UTILS_INCLUDE_DIRS ${UTILS_DIRECTORY} ${UTILS_DIRECTORY}/camera ${UTILS_DIRECTORY}/codec ${UTILS_DIRECTORY}/cuda ${UTILS_DIRECTORY}/display ${UTILS_DIRECTORY}/input ${UTILS_DIRECTORY}/network ${UTILS_DIRECTORY}/threads)
+include_directories(${UTILS_DIRECTORY} ${UTILS_DIRECTORY}/camera ${UTILS_DIRECTORY}/codec ${UTILS_DIRECTORY}/cuda ${UTILS_DIRECTORY}/display ${UTILS_DIRECTORY}/input ${UTILS_DIRECTORY}/network ${UTILS_DIRECTORY}/threads)
+file(GLOB jetsonUtilitySources ${UTILS_DIRECTORY}/*.cpp ${UTILS_DIRECTORY}/camera/*.cpp ${UTILS_DIRECTORY}/codec/*.cpp ${UTILS_DIRECTORY}/cuda/*.cu ${UTILS_DIRECTORY}/display/*.cpp ${UTILS_DIRECTORY}/input/*.cpp ${UTILS_DIRECTORY}/network/*.cpp ${UTILS_DIRECTORY}/threads/*.cpp)
+file(GLOB jetsonUtilityIncludes ${UTILS_DIRECTORY}/*.h ${UTILS_DIRECTORY}/camera/*.h ${UTILS_DIRECTORY}/codec/*.h ${UTILS_DIRECTORY}/cuda/*.h ${UTILS_DIRECTORY}/display/*.h ${UTILS_DIRECTORY}/input/*.h ${UTILS_DIRECTORY}/network/*.h ${UTILS_DIRECTORY}/threads/*.h)
 
 # executable
-cuda_add_executable( tensorrt_test main.cpp )
+cuda_add_executable( tensorrt_test main.cpp)
 # finally link libraries
 cuda_include_directories(${TENSORRT_INCLUDE_DIR} ${CUDNN_INCLUDE_DIR})
 target_include_directories(tensorrt_test PUBLIC ${CUDA_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${CUDNN_INCLUDE_DIR})

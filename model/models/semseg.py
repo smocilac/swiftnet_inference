@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from itertools import chain
 
-from .util import _BNReluConv, upsample
+from .util import _BNReluConv, upsample, util_target_size, util_image_size
 
 
 class SemsegModel(nn.Module):
@@ -13,26 +13,27 @@ class SemsegModel(nn.Module):
         self.num_classes = num_classes
         self.logits = _BNReluConv(self.backbone.num_features, self.num_classes, batch_norm=use_bn)
 
-    def forward(self, pyramid): #, target_size, image_size):
+    def forward(self, image): #, target_size, image_size):
         #data = {'pyramid': [pyramid],'target_size': (1024, 2048), 'target_size_feats': (1048 // 4, 2048 // 4), }
         #data = self.prepare_data(data, None)
         #pyramid = data['pyramid']
-        pyramid = [p.clone().detach().requires_grad_(False).to('cuda') for p in [pyramid]]
-        self.target_size = (256, 512)
-        self.image_size = (1024, 2048)
+        #pyramid = [p.clone().detach().requires_grad_(False).to('cuda') for p in [pyramid]]
+        self.target_size = util_target_size
+        self.image_size = util_image_size
 
-        feats, additional0, additional1 = zip(*[self.backbone(p) for p in pyramid])
+        feats, _, _ = self.backbone(image)
         #feature_pyramid = [upsample(f, self.target_size) for f in feats]
-        feature_pyramid = [F.interpolate(f, self.target_size, mode='nearest') for f in feats]
+        features = F.interpolate(feats, self.target_size, mode='nearest') 
         
-        features = feature_pyramid[0] if len(feature_pyramid) == 1 else None
+        #features = feature_pyramid[0] if len(feature_pyramid) == 1 else None
         logits = self.logits.forward(features)
         
         logits_i = F.interpolate(logits, self.image_size, mode='nearest')
         
         # x = torch.view(int(torch.argmax(logits_i, 1)))
-        logits_ = torch.argmax(logits_i, 1) # calculates index of winning class  
-        return logits_, additional0
+        # logits_ = torch.argmax(logits_i, 1) # calculates index of winning class  
+
+        return logits_i
     
         #return upsample(logits, self.image_size), additional0
 
