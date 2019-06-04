@@ -7,8 +7,12 @@ import pdb
 upsample = lambda x, size: F.interpolate(x, size, mode='nearest')
 batchnorm_momentum = 0.01 / 2
 
-util_target_size=(256, 512)
+
+# util_image_size=(128, 256)
+# util_image_size=(256, 512)
+# util_image_size=(512, 1024)
 util_image_size=(1024, 2048)
+util_target_size=(util_image_size[0] // 4, util_image_size[1] // 4)
 
 
 def get_n_params(parameters):
@@ -42,12 +46,13 @@ class _Upsample(nn.Module):
         self.num_maps_out = num_maps_out
         self.skip_maps_in = skip_maps_in
         #self.x = 64 * (256 // skip_maps_in)
-        self.x = 64 * (util_target_size[0] // skip_maps_in)
+        self.x = 8 * (util_target_size[0] * 8 // skip_maps_in)
         self.y = self.x * 2
 
     def forward(self, x, skip):
         skip = self.bottleneck.forward(skip)
         #skip_size = skip.size()[2:4]
+        #print("skip.size()[2:4]", skip.size()[2:4])
         skip_size = (self.x, self.y)
         #print("skip size = ", skip_size, " ", self.num_maps_in, " ", self.num_maps_out, " ", self.skip_maps_in)
         x = upsample(x, skip_size)
@@ -79,12 +84,14 @@ class SpatialPyramidPooling(nn.Module):
         # target_size = x.size()[2:4]
         # target_size = (32,64)
         target_size=(util_target_size[0] // 8, util_target_size[1] // 8)
+        #print ("x.size()[2:4] = ", x.size()[2:4])
+        #print ("target_size", target_size)
         ar = target_size[1] / target_size[0]
 
         x = self.spp[0].forward(x)
         levels.append(x)
         num = len(self.spp) - 1
-        print(num," ", target_size)
+        #print(num," ", target_size)
         # grid_sizes = [(8,16), (4,8), (2,4)]
 
         for i in range(1, num):
@@ -100,7 +107,7 @@ class SpatialPyramidPooling(nn.Module):
             #level = upsample(level, target_size)
             level = F.interpolate(level, target_size, mode='nearest')
             levels.append(level)
-        print("forward passed")
+        #print("forward passed")
         x = torch.cat(levels, 1)
         x = self.spp[-1].forward(x)
         return x

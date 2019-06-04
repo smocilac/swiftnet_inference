@@ -12,8 +12,7 @@ if __name__=='__main__':
     model = SemsegModel(resnet, 19, use_bn=use_bn)
     model.load_state_dict(torch.load('/home/smocilac/dipl_seminar/swiftnet/weights/swiftnet_ss_cs.pt'), strict=True)
     model.to('cuda') 
-    input_ = torch.ones([1,3,1024,2048])
-    # model.forward(input_)
-
-    torch.onnx.export(model, input_, "swiftnet.onnx", verbose=True, do_constant_folding=True)
+    input_ = torch.ones([1,3,256,512]).to('cuda')
+    model.forward(input_)
+    #torch.onnx.export(model, input_, "swiftnet.onnx", verbose=True, do_constant_folding=True)
 

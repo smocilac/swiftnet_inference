@@ -37,6 +37,8 @@ void* buffers[2];
 float inferenceTime;
 IHostMemory* trtModelStream{nullptr};
 
+bool startTimeMeasure;
+
 void doInference(IExecutionContext& context, const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
 void saveEngine();
 void readEngine(std::unique_ptr<char[]> &data, size_t &data_len);
@@ -48,6 +50,7 @@ size_t getBufferSize(nvinfer1::Dims dims, int isInput);
 
 
 int main(int argc, char** argv){
+    startTimeMeasure = false;
     bool createNewEngine = true;
 
     try {
@@ -113,7 +116,8 @@ int main(int argc, char** argv){
     createRandomBuffers(ctxEngine, buffers, size_in, size_out, inputIndex);
     //createRandomBuffersUnifiedMemory(ctxEngine, buffers, size_in, size_out, inputIndex);
 
-    //doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex, maxBatchSize); // just warming up
+    doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex); // just warming up
+    startTimeMeasure = true;
     inferenceTime = 0.0f;
     auto t1 = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < n_iterations; i++)
@@ -121,7 +125,6 @@ int main(int argc, char** argv){
     auto t2 = std::chrono::high_resolution_clock::now();
 
     float timeAvg = ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
-    std::cout << "Average inference with GPU-CPU and CPU-GPU transfer: " <<  timeAvg / n_iterations  << " ms. " << std::endl;
     std::cout << "inference time final: " << inferenceTime << std::endl;
     std::cout << "full time: " << timeAvg << std::endl;
     float timeAvgInf = inferenceTime / (n_iterations * n_iterations);
@@ -163,7 +166,8 @@ void doInference(IExecutionContext& context, const ICudaEngine& engine, float**&
     cudaStreamSynchronize(stream);
     
     auto t2 = std::chrono::high_resolution_clock::now();
-    inferenceTime += ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+    if (startTimeMeasure)
+        inferenceTime += ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
     
     // release the stream
     cudaStreamDestroy(stream);

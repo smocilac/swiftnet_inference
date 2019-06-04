@@ -137,7 +137,7 @@ private:
         case Severity::kERROR: return "[E] ";
         case Severity::kWARNING: return "[W] ";
         case Severity::kINFO: return "[I] ";
-        case Severity::kVERBOSE: return "[V] ";
+        //case Severity::kVERBOSE: return "[V] ";
         default: assert(0); return "";
         }
     }
@@ -350,7 +350,7 @@ private:
         case Severity::kERROR: return "[E] ";
         case Severity::kWARNING: return "[W] ";
         case Severity::kINFO: return "[I] ";
-        case Severity::kVERBOSE: return "[V] ";
+        //case Severity::kVERBOSE: return "[V] ";
         default: assert(0); return "";
         }
     }
@@ -418,7 +418,7 @@ namespace
 //!
 inline LogStreamConsumer LOG_VERBOSE(const Logger& logger)
 {
-    return LogStreamConsumer(logger.getReportableSeverity(), Severity::kVERBOSE);
+    return LogStreamConsumer(logger.getReportableSeverity(), Severity::kINFO);
 }
 
 //!
