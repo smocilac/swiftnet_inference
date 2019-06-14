@@ -13,13 +13,12 @@
 
 #include "cudaMappedMemory.h"
 
+//#define TX2
+
 /*
 TODO
-torch onnx caffe2 onnx
-remove memcpy tx2
-graf (x - resolution, y = fps)
+accuracy test
 */
-
 
 using namespace nvinfer1;
 
@@ -29,6 +28,8 @@ LogStreamConsumer gLogError{LOG_ERROR(gLoggerSample)};
 
 int maxBatchSize;
 size_t n_iterations;
+size_t mode;
+bool createNewEngine;
 bool int8mode;
 bool fp16mode;
 std::string modelFile;
@@ -44,51 +45,19 @@ void saveEngine();
 void readEngine(std::unique_ptr<char[]> &data, size_t &data_len);
 void buildEngine();
 void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
+#ifdef TX2
 void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
+#endif
 size_t getBufferSize(nvinfer1::Dims dims, int isInput);
-
+void performanceTest(IExecutionContext* context, const ICudaEngine& ctxEngine, float **buffers, size_t size_in, size_t size_out, int inputIndex);
+void accuracyTest(IExecutionContext* context, const ICudaEngine& ctxEngine, float **buffers, size_t size_in, size_t size_out, int inputIndex);
+void parseCmdArguments(int argc, char** argv);
 
 
 int main(int argc, char** argv){
     startTimeMeasure = false;
-    bool createNewEngine = true;
 
-    try {
-        TCLAP::CmdLine cmd("Command description message", ' ', "0.9");
-
-        TCLAP::ValueArg<std::string> onnxPathAg("o", "onnx-path", "Path to *.onnx model", false, "/home/smocilac/dipl_seminar/swiftnet/swiftnet.onnx", "path");
-        TCLAP::ValueArg<std::string> enginePathAg("e", "engine-path", "Path where *.trt model should be/is stored", false, "/home/smocilac/dipl_seminar/dipl_seminar/swiftnet.trt", "path");
-        TCLAP::ValueArg<size_t> batchSizeAg("b", "batch", "Batch size.", false, 1, "size_t");
-        TCLAP::ValueArg<size_t> nItersAg("n", "n-iters", "Number of iterations used in report generation.", false, 30, "size_t");
-        
-        cmd.add(onnxPathAg);
-        cmd.add(enginePathAg);
-        cmd.add(batchSizeAg);
-        cmd.add(nItersAg);
-        TCLAP::SwitchArg fp16modeAg("f","fp16","FP16 mode.", cmd, false);
-        TCLAP::SwitchArg int8modeAg("i","int8","INT8 mode.", cmd, false);
-        TCLAP::SwitchArg createNewEngineAg("c","create-engine","Creates new engine (either creates the engine file or overrides the old one).", cmd, false);
-        cmd.parse( argc, argv );
-
-        modelFile = onnxPathAg.getValue();
-        enginePath = enginePathAg.getValue();
-        maxBatchSize = batchSizeAg.getValue();
-        n_iterations = nItersAg.getValue();
-
-	    fp16mode = fp16modeAg.getValue();
-        int8mode = int8modeAg.getValue();
-        createNewEngine = createNewEngineAg.getValue();
-
-    } catch (TCLAP::ArgException &e) { 
-        std::cerr << "error: " << e.error() << " for arg " << e.argId() << std::endl; 
-    }
-
-    std::cout << "ONNX path:\t" << modelFile << std::endl;
-    std::cout << "Enginge path:\t" << enginePath << std::endl;
-    std::cout << "Batch Size:\t " << maxBatchSize << std::endl;
-    std::cout << "FP16 mode:\t" << fp16mode << std::endl;
-    std::cout << "INT8 mode:\t" << int8mode << std::endl;
-    std::cout << "Create engine:\t" << createNewEngine << std::endl;
+    parseCmdArguments(argc, argv);
     
     if (createNewEngine)
         buildEngine();
@@ -116,7 +85,73 @@ int main(int argc, char** argv){
     createRandomBuffers(ctxEngine, buffers, size_in, size_out, inputIndex);
     //createRandomBuffersUnifiedMemory(ctxEngine, buffers, size_in, size_out, inputIndex);
 
+    if (mode == 0 || mode == 1)
+        performanceTest(context, ctxEngine, buffers, size_in, size_out, inputIndex);
+
+    // if (mode == 0 || mode == 2)
+    //     accuracyTest(context, ctxEngine, buffers, size_in, size_out, inputIndex);
+    
+    // for (int b = 0; b < 2; ++b) 
+    // {
+    //     CHECK(cudaFree(buffers[b]));
+    // }
+
+    // destroy the engine2
+    context->destroy();
+    engine->destroy();
+    runtime->destroy();
+
+    return 0;
+}
+
+
+void parseCmdArguments(int argc, char** argv){
+    try {
+        TCLAP::CmdLine cmd("Command description message", ' ', "0.9");
+
+        TCLAP::ValueArg<std::string> onnxPathAg("o", "onnx-path", "Path to *.onnx model", false, "/home/smocilac/dipl_seminar/swiftnet/swiftnet.onnx", "path");
+        TCLAP::ValueArg<std::string> enginePathAg("e", "engine-path", "Path where *.trt model should be/is stored", false, "/home/smocilac/dipl_seminar/dipl_seminar/swiftnet.trt", "path");
+        TCLAP::ValueArg<size_t> batchSizeAg("b", "batch", "Batch size.", false, 1, "size_t");
+        TCLAP::ValueArg<size_t> modeAg("m", "mode", "0 - run all (default), 1 - measure accuracy, 2 - test performance test", false, 0, "size_t");
+        TCLAP::ValueArg<size_t> nItersAg("n", "n-iters", "Number of iterations used in report generation.", false, 30, "size_t");
+        
+        cmd.add(onnxPathAg);
+        cmd.add(enginePathAg);
+        cmd.add(batchSizeAg);
+        cmd.add(modeAg);
+        cmd.add(nItersAg);
+        TCLAP::SwitchArg fp16modeAg("f","fp16","FP16 mode.", cmd, false);
+        TCLAP::SwitchArg int8modeAg("i","int8","INT8 mode.", cmd, false);
+        TCLAP::SwitchArg createNewEngineAg("c","create-engine","Creates new engine (either creates the engine file or overrides the old one).", cmd, false);
+        cmd.parse( argc, argv );
+
+        modelFile = onnxPathAg.getValue();
+        enginePath = enginePathAg.getValue();
+        maxBatchSize = batchSizeAg.getValue();
+        mode = modeAg.getValue();
+        n_iterations = nItersAg.getValue();
+
+	    fp16mode = fp16modeAg.getValue();
+        int8mode = int8modeAg.getValue();
+        createNewEngine = createNewEngineAg.getValue();
+
+    } catch (TCLAP::ArgException &e) { 
+        std::cerr << "error: " << e.error() << " for arg " << e.argId() << std::endl; 
+    }
+
+    std::cout << "ONNX path:\t" << modelFile << std::endl;
+    std::cout << "Enginge path:\t" << enginePath << std::endl;
+    std::cout << "Batch Size:\t " << maxBatchSize << std::endl;
+    std::cout << "Mode:\t " << mode << std::endl;
+    std::cout << "FP16 mode:\t" << fp16mode << std::endl;
+    std::cout << "INT8 mode:\t" << int8mode << std::endl;
+    std::cout << "Create engine:\t" << createNewEngine << std::endl;
+}
+
+
+void performanceTest(IExecutionContext* context, const ICudaEngine& ctxEngine, float **buffers, size_t size_in, size_t size_out, int inputIndex){
     doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex); // just warming up
+
     startTimeMeasure = true;
     inferenceTime = 0.0f;
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -131,17 +166,6 @@ int main(int argc, char** argv){
     std::cout << "Average inference with GPU-CPU and CPU-GPU transfer: " <<  ((timeAvg - inferenceTime) / n_iterations) + timeAvgInf  << " ms. " << std::endl;
     std::cout << "Average inference only: " << timeAvgInf << " ms. " << std::endl;
     
-    // for (int b = 0; b < 2; ++b) 
-    // {
-    //     CHECK(cudaFree(buffers[b]));
-    // }
-
-    // destroy the engine2
-    context->destroy();
-    engine->destroy();
-    runtime->destroy();
-
-    return 0;
 }
 
 
@@ -297,6 +321,7 @@ void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t 
     CHECK(cudaMalloc(&buffers[(inputIndex + 1) % 2], size_out * sizeof(float)));
 }
 
+#ifdef TX2
 void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex){
     const int const_nbBindings = engine.getNbBindings();
     assert(const_nbBindings == 2); // only one input and one output is allowed
@@ -320,6 +345,7 @@ void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, float**& io_buf
 
     std::cout << "Succesfully created unified memory!\n";
 }
+#endif
 
 
 size_t getBufferSize(nvinfer1::Dims dims, int isInput){
