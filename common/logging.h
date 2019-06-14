@@ -138,7 +138,7 @@ private:
         case Severity::kWARNING: return "[W] ";
         case Severity::kINFO: return "[I] ";
         //case Severity::kVERBOSE: return "[V] ";
-        default: assert(0); return "";
+        default:/* assert(0);*/ return "[I]";
         }
     }
 
@@ -351,7 +351,7 @@ private:
         case Severity::kWARNING: return "[W] ";
         case Severity::kINFO: return "[I] ";
         //case Severity::kVERBOSE: return "[V] ";
-        default: assert(0); return "";
+        default: /* assert(0);*/ return "[I]";
         }
     }
 
