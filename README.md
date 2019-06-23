@@ -17,7 +17,7 @@ cd accuracy-test
 python trt_inference.py
 ```
 
-## CONVERT MODEL TO ONNX:
+## CONVERT SWIFTNET MODEL TO ONNX:
 ```
 cd model
 nano swiftnet_to_onnx.py 
@@ -35,3 +35,6 @@ python torch_timer_eval.py
 
 ## DOWNLOAD WEIGHTS:
 wget http://elbereth.zemris.fer.hr/swiftnet/swiftnet_ss_cs.pt -P weights/
+
+## SWIFTNET MODEL PUBLIC REPOSITORY:
+https://github.com/orsic/swiftnet/
