@@ -11,6 +11,12 @@ make
 ./tensorrt_test -h
 ```
 
+## RUN ACCURACY TEST:
+```
+cd accuracy-test
+python trt_inference.py
+```
+
 ## CONVERT MODEL TO ONNX:
 ```
 cd model
