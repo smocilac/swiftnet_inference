@@ -16,7 +16,7 @@ From https://www.cityscapes-dataset.com/downloads/ download:
 * leftImg8bit_trainvaltest.zip (11GB)
 * gtFine_trainvaltest.zip (241MB)
 
-Download and extract to `datasets/Cityscapes`
+Download and extract to `accuracy-test/datasets/Cityscapes`
 ```
 cd accuracy-test
 python trt_inference.py
