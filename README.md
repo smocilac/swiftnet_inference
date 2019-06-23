@@ -12,6 +12,11 @@ make
 ```
 
 ## RUN ACCURACY TEST:
+From https://www.cityscapes-dataset.com/downloads/ download: 
+* leftImg8bit_trainvaltest.zip (11GB)
+* gtFine_trainvaltest.zip (241MB)
+
+Download and extract to `datasets/Cityscapes`
 ```
 cd accuracy-test
 python trt_inference.py
