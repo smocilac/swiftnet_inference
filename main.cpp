@@ -35,25 +35,30 @@ bool fp16mode;
 std::string modelFile;
 std::string enginePath;
 void* buffers[2];
+float **io_buffers;
+
 float inferenceTime;
 IHostMemory* trtModelStream{nullptr};
 
 bool startTimeMeasure;
 
-void doInference(IExecutionContext& context, const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
+void doInference(IExecutionContext& context, const ICudaEngine& engine, size_t &size_in, size_t &size_out, int &inputIndex);
 void saveEngine();
 void readEngine(std::unique_ptr<char[]> &data, size_t &data_len);
 void buildEngine();
-void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
+void createRandomBuffers(const ICudaEngine& engine, size_t &size_in, size_t &size_out, int &inputIndex);
 #ifdef TX2
-void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex);
+void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, size_t &size_in, size_t &size_out, int &inputIndex);
 #endif
 size_t getBufferSize(nvinfer1::Dims dims, int isInput);
-void performanceTest(IExecutionContext* context, const ICudaEngine& ctxEngine, float **buffers, size_t size_in, size_t size_out, int inputIndex);
-void accuracyTest(IExecutionContext* context, const ICudaEngine& ctxEngine, float **buffers, size_t size_in, size_t size_out, int inputIndex);
+void performanceTest(IExecutionContext* context, const ICudaEngine& ctxEngine, size_t size_in, size_t size_out, int inputIndex);
+void accuracyTest(IExecutionContext* context, const ICudaEngine& ctxEngine, size_t size_in, size_t size_out, int inputIndex);
 void parseCmdArguments(int argc, char** argv);
+void loadNextImage();
+void saveInferenceImage();
 
 
+std::string ImageFilePath;
 int main(int argc, char** argv){
     startTimeMeasure = false;
 
@@ -77,19 +82,19 @@ int main(int argc, char** argv){
     assert(context != nullptr);
 
     // run inference
-    float **buffers;
     size_t size_in, size_out;
     int inputIndex;
     const ICudaEngine& ctxEngine = context->getEngine();
     
-    createRandomBuffers(ctxEngine, buffers, size_in, size_out, inputIndex);
-    //createRandomBuffersUnifiedMemory(ctxEngine, buffers, size_in, size_out, inputIndex);
+    createRandomBuffers(ctxEngine, size_in, size_out, inputIndex);
+    // this should do unified memory copy for tx2, but seems to work slower ( ??? )
+    //createRandomBuffersUnifiedMemory(ctxEngine, size_in, size_out, inputIndex);
+
+    if (mode == 0 || mode == 2)
+        performanceTest(context, ctxEngine, size_in, size_out, inputIndex);
 
     if (mode == 0 || mode == 1)
-        performanceTest(context, ctxEngine, buffers, size_in, size_out, inputIndex);
-
-    // if (mode == 0 || mode == 2)
-    //     accuracyTest(context, ctxEngine, buffers, size_in, size_out, inputIndex);
+        accuracyTest(context, ctxEngine, size_in, size_out, inputIndex);
     
     // for (int b = 0; b < 2; ++b) 
     // {
@@ -109,12 +114,13 @@ void parseCmdArguments(int argc, char** argv){
     try {
         TCLAP::CmdLine cmd("Command description message", ' ', "0.9");
 
+        TCLAP::ValueArg<std::string> imagePathAg("r", "raw-image-path", "Path to raw image (only for accuracy test !!! )", false, "/home/smocilac/dipl_seminar/swiftnet-master/image.txt", "path");
         TCLAP::ValueArg<std::string> onnxPathAg("o", "onnx-path", "Path to *.onnx model", false, "/home/smocilac/dipl_seminar/swiftnet/swiftnet.onnx", "path");
         TCLAP::ValueArg<std::string> enginePathAg("e", "engine-path", "Path where *.trt model should be/is stored", false, "/home/smocilac/dipl_seminar/dipl_seminar/swiftnet.trt", "path");
         TCLAP::ValueArg<size_t> batchSizeAg("b", "batch", "Batch size.", false, 1, "size_t");
         TCLAP::ValueArg<size_t> modeAg("m", "mode", "0 - run all (default), 1 - measure accuracy, 2 - test performance test", false, 0, "size_t");
         TCLAP::ValueArg<size_t> nItersAg("n", "n-iters", "Number of iterations used in report generation.", false, 30, "size_t");
-        
+        cmd.add(imagePathAg);
         cmd.add(onnxPathAg);
         cmd.add(enginePathAg);
         cmd.add(batchSizeAg);
@@ -125,6 +131,7 @@ void parseCmdArguments(int argc, char** argv){
         TCLAP::SwitchArg createNewEngineAg("c","create-engine","Creates new engine (either creates the engine file or overrides the old one).", cmd, false);
         cmd.parse( argc, argv );
 
+        ImageFilePath = imagePathAg.getValue();
         modelFile = onnxPathAg.getValue();
         enginePath = enginePathAg.getValue();
         maxBatchSize = batchSizeAg.getValue();
@@ -148,15 +155,50 @@ void parseCmdArguments(int argc, char** argv){
     std::cout << "Create engine:\t" << createNewEngine << std::endl;
 }
 
+void loadNextImage(size_t &image_len){
+    std::ifstream file;
+    file.open(ImageFilePath,std::ios::binary | std::ios::in);
+    if(!file.is_open())
+    {
+        std::cout << "read image file " << ImageFilePath <<" failed" << std::endl;
+        return;
+    }
+    file.seekg(0, ios::end); 
+    image_len = file.tellg();         
+    file.seekg(0, ios::beg); 
+    file.read((char *)(io_buffers[0]), image_len);
+    file.close();
+}
 
-void performanceTest(IExecutionContext* context, const ICudaEngine& ctxEngine, float **buffers, size_t size_in, size_t size_out, int inputIndex){
-    doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex); // just warming up
+
+void saveInferenceImage(size_t image_len){
+    std::ofstream file;
+    file.open(ImageFilePath + ".out",std::ios::binary | std::ios::out);
+    if(!file.is_open())
+    {
+        std::cout << "create image file " << ImageFilePath + ".out " <<" failed" << std::endl;
+        return;
+    }
+    file.write((char *)(io_buffers[1]), image_len * sizeof(float));
+    file.close();
+}
+
+void accuracyTest(IExecutionContext* context, const ICudaEngine& ctxEngine, size_t size_in, size_t size_out, int inputIndex){
+    size_t image_len;
+    loadNextImage(image_len);
+    doInference(*context, ctxEngine, size_in, size_out, inputIndex); // just warming up
+    saveInferenceImage(size_out);
+}
+
+void performanceTest(IExecutionContext* context, const ICudaEngine& ctxEngine, size_t size_in, size_t size_out, int inputIndex){
+    doInference(*context, ctxEngine, size_in, size_out, inputIndex); // just warming up
 
     startTimeMeasure = true;
+
     inferenceTime = 0.0f;
     auto t1 = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < n_iterations; i++)
-        doInference(*context, ctxEngine, buffers, size_in, size_out, inputIndex);
+        doInference(*context, ctxEngine, size_in, size_out, inputIndex);
     auto t2 = std::chrono::high_resolution_clock::now();
 
     float timeAvg = ((float)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
@@ -165,11 +207,12 @@ void performanceTest(IExecutionContext* context, const ICudaEngine& ctxEngine, f
     float timeAvgInf = inferenceTime / (n_iterations * n_iterations);
     std::cout << "Average inference with GPU-CPU and CPU-GPU transfer: " <<  ((timeAvg - inferenceTime) / n_iterations) + timeAvgInf  << " ms. " << std::endl;
     std::cout << "Average inference only: " << timeAvgInf << " ms. " << std::endl;
-    
+
+    startTimeMeasure = false;
 }
 
 
-void doInference(IExecutionContext& context, const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex)
+void doInference(IExecutionContext& context, const ICudaEngine& engine, size_t &size_in, size_t &size_out, int &inputIndex)
 {
     assert(engine.getNbBindings() == 2);
     
@@ -182,9 +225,13 @@ void doInference(IExecutionContext& context, const ICudaEngine& engine, float**&
     CHECK(cudaMemcpyAsync(buffers[inputIndex], io_buffers[inputIndex], size_in * sizeof(float), cudaMemcpyHostToDevice, stream));
     
     auto t1 = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < n_iterations; i++)
-        context.enqueue(maxBatchSize, buffers, stream, nullptr);    
-    //std::cout << "inference time: " << inferenceTime / n_iterations << std::endl;
+    
+    if (startTimeMeasure) {
+        for (int i = 0; i < n_iterations; i++)
+            context.enqueue(maxBatchSize, buffers, stream, nullptr);    
+    } else {
+        context.enqueue(maxBatchSize, buffers, stream, nullptr);
+    }
     
     CHECK(cudaMemcpyAsync(io_buffers[outputIndex], buffers[outputIndex], size_out * sizeof(float), cudaMemcpyDeviceToHost, stream));
     cudaStreamSynchronize(stream);
@@ -285,7 +332,7 @@ void readEngine(std::unique_ptr<char[]> &data, size_t &data_len)
     file.close();
 };
 
-void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex){
+void createRandomBuffers(const ICudaEngine& engine, size_t &size_in, size_t &size_out, int &inputIndex){
     const int const_nbBindings = engine.getNbBindings();
     
     assert(const_nbBindings == 2);
@@ -322,7 +369,7 @@ void createRandomBuffers(const ICudaEngine& engine, float**& io_buffers, size_t 
 }
 
 #ifdef TX2
-void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, float**& io_buffers, size_t &size_in, size_t &size_out, int &inputIndex){
+void createRandomBuffersUnifiedMemory(const ICudaEngine& engine, size_t &size_in, size_t &size_out, int &inputIndex){
     const int const_nbBindings = engine.getNbBindings();
     assert(const_nbBindings == 2); // only one input and one output is allowed
     assert(engine.bindingIsInput(0) == 1); // on index 0 must be input for now
